@@ -1,0 +1,126 @@
+---
+title: "457finalfrequency1"
+format: pdf
+---
+
+```{r}
+#| message: false
+#| warning: false
+# Load libraries
+library(readr)
+library(lubridate)  
+library(forecast)  
+library(ggplot2)    
+library(tseries)   
+library(tsoutliers)
+library(vars)
+```
+
+```{r}
+#| message: false
+#| warning: false
+
+# 1. Data Import and Preprocessing
+
+# Read the CSV file 
+data <- read_csv("Daily Prices_ICCO (1).csv", show_col_types = FALSE)
+data$Date <- as.Date(data$Date, format = "%d/%m/%Y")
+
+data <- data[order(data$Date), ]
+
+# Scale the price
+data$ScaledPrice <- scale(data$`ICCO daily price (US$/tonne)`, center = TRUE, scale = TRUE)
+
+# Calculate start_year and start_day
+start_year <- year(min(data$Date))
+start_doy  <- yday(min(data$Date))
+
+# Create a time series
+price_ts <- ts(data$ScaledPrice, frequency = 1,start = c(start_year, start_doy))
+autoplot(price_ts)+
+  ggtitle("Cocoa Futures Daily Prices") +
+  xlab("Time") +
+  ylab("Price")
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Create training and test subsets
+train_data <- data[data$Date < as.Date("2024-06-01"), ]
+test_data  <- data[data$Date >= as.Date("2024-06-01"), ]
+
+# Change the training subset into a time series
+train_start_year <- year(min(train_data$Date))
+train_start_doy  <- yday(min(train_data$Date))
+train_ts <- ts(train_data$ScaledPrice, frequency = 1, start = c(train_start_year, train_start_doy))
+autoplot(train_ts)+
+  ggtitle("Cocoa Futures Daily Prices") +
+  xlab("Time") +
+  ylab("Price")
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Change the test subset into a time series
+test_start_year <- year(min(test_data$Date))
+test_start_doy  <- yday(min(test_data$Date))
+test_ts <- ts(test_data$ScaledPrice, frequency = 1, start = c(test_start_year, test_start_doy))
+autoplot(test_ts)+
+  ggtitle("Cocoa Futures Daily Prices") +
+  xlab("Time") +
+  ylab("Price")
+
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Check for variance stabilization need using a Box–Cox transformation
+lambda <- BoxCox.lambda(train_ts)
+cat("Estimated Box-Cox Lambda:", lambda, "\n")
+
+# Apply Box–Cox transformation if lambda is not 1
+if(abs(lambda - 1) > 0.1){
+  train_ts <- BoxCox(train_ts, lambda)
+} else {
+  train_ts <- train_ts 
+}
+
+# ADF Test on the transformed series
+adf_result <- adf.test(train_ts)
+print(adf_result)
+
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Compute the differenced series if non-stationary
+if(adf_result$p.value > 0.05){
+  train_diff <- diff(train_ts)
+} else {
+  train_diff <- train_ts
+}
+
+autoplot(train_diff) +
+  ggtitle("First Difference of Transformed Prices") +
+  xlab("Time") +
+  ylab("Differenced Price")
+
+```
+
+
+
+```{r}
+#| message: false
+#| warning: false
+acf(train_diff, main = "ACF of Differenced Prices")
+```
+
+```{r}
+#| message: false
+#| warning: false
+pacf(train_diff, main = "PACF of Differenced Prices")
+```
