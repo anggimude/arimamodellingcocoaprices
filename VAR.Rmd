@@ -1,0 +1,145 @@
+
+
+```{r}
+library(readr)
+library(lubridate)
+library(forecast)
+library(ggplot2)
+library(tseries)
+library(vars)
+library(dplyr)
+```
+
+```{r}
+
+# Read in and scale Price Data
+
+price_data <- read_csv("Daily Prices_ICCO (1).csv", show_col_types = FALSE)
+price_data$Date <- as.Date(price_data$Date, format="%d/%m/%Y")
+
+price_data <- price_data[order(price_data$Date), ]
+
+price_data$ScaledPrice <- scale(price_data$`ICCO daily price (US$/tonne)`, center=TRUE, scale=TRUE)
+
+
+start_year <- year(min(price_data$Date))
+start_doy <- yday(min(price_data$Date))
+
+price_ts <- ts(price_data$ScaledPrice, start=c(start_year, start_doy))
+
+autoplot(price_ts)
+
+
+```
+
+```{r}
+
+# Read, clean and join climate and price datasets
+
+data <- read_csv("Ghana_data (1).csv", show_col_types = FALSE)
+data$Date <- as.Date(data$DATE, format="%d/%m/%Y")
+
+data <- data[order(data$Date), ]
+
+clean_df <- data %>% 
+  mutate(PRCP = ifelse(is.na(PRCP), 0, PRCP)) %>%
+  group_by(Date) %>%
+  summarise(
+    avg_PRCP = mean(PRCP),
+    avg_TAVG = mean(TAVG, na.rm = TRUE)
+  )
+
+
+merged_data <- inner_join(price_data, clean_df, by="Date")
+
+start_year <- year(min(merged_data$Date))
+start_doy <- yday(min(merged_data$Date))
+
+price_ts <- ts(merged_data$avg_TAVG, start=c(start_year, start_doy))
+
+autoplot(price_ts)
+
+```
+
+
+
+
+```{r}
+
+# Split data into train and test 
+
+
+train_data <- merged_data[merged_data$Date < as.Date("2024-06-01"), ]
+test_data <- merged_data[merged_data$Date >= as.Date("2024-06-01"), ]
+
+train_start_year <- year(min(train_data$Date))
+train_start_doy <- yday(min(train_data$Date))
+
+```
+
+
+```{r}
+VAR_data <- data.frame(x = train_data$ScaledPrice, y = train_data$avg_PRCP,z = train_data$avg_TAVG)
+```
+
+```{r}
+ts_data <-VAR_data
+lag_selection <- VARselect(ts_data, lag.max = 40, type = "const")
+best_lag <- lag_selection$selection["AIC(n)"]
+print(best_lag)
+```
+```{r}
+var_model <- VAR(ts_data, p = best_lag, type = "const",)
+```
+
+```{r}
+forecast <- predict(var_model, n.ahead = 124)
+
+plot(forecast, names="x")
+```
+
+```{r}
+
+# Calculate RMSE on testing data (Simulated for 2024-06-1 - 2024-11-01)
+
+x_forecasted <- forecast$fcst$x[, 1]
+true_test <- test_data$ScaledPrice
+
+accuracy(x_forecasted, true_test)
+```
+
+
+
+
+```{r}
+# Calculate RMSE on training data (one day ahead prediction)
+
+fit <- fitted(var_model)[, 1]
+true_train <- train_data$ScaledPrice[40:length(train_data$ScaledPrice)]
+
+train_rmse <- sqrt(mean((true_train - fit)^2))
+
+train_rmse
+
+```
+```{r}
+
+dates <-train_data$Date[40:length(train_data$Date)]
+
+plot(c(dates[5000:length(true_train)], test_data$Date), c(true_train[5000:length(true_train)], true_test), ylim = c(-1, 9), type = 'l', col="black",xlab="Date", ylab="Scaled Price")
+lines(test_data$Date, forecast$fcst$x[, 1], col="red")
+lines(test_data$Date, forecast$fcst$x[, 2], col = "red", lty = 2)
+lines(test_data$Date, forecast$fcst$x[, 3], col = "red", lty = 2)
+
+abline(v = as.Date("2024-06-01"), col = "red", lwd = 2, lty = 3)
+
+legend("topleft", legend = c("True","Forecast", "Forecast lower bound", "Forecast upper bound"),
+       col = c("black","red" ,"red", "red"), lty = c(1,1, 2, 2), bty = "n")
+
+```
+
+
+
+
+
+
